@@ -1,10 +1,51 @@
 "use client";
 
 import { useUser } from "@/hooks/useUser";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
+import { collection, getCountFromServer, query, where, onSnapshot, deleteDoc, doc, orderBy } from "firebase/firestore";
+import { useEffect, useState } from "react";
 
 export default function ProfilePage() {
   const { profile, loading } = useUser();
+  const [stats, setStats] = useState({ projects: 0, personnel: 0, uploads: 0 });
+  const [events, setEvents] = useState<any[]>([]);
+
+  const isAdmin = profile?.role === "admin";
+
+  useEffect(() => {
+    if (isAdmin) {
+      const fetchStats = async () => {
+         try {
+           const projectsSnap = await getCountFromServer(collection(db, "published_events"));
+           const usersSnap = await getCountFromServer(query(collection(db, "users"), where("role", "==", "volunteer")));
+           const uploadsSnap = await getCountFromServer(collection(db, "media_assets"));
+           
+           setStats({
+              projects: projectsSnap.data().count,
+              personnel: usersSnap.data().count,
+              uploads: uploadsSnap.data().count
+           });
+         } catch (err) {
+           console.error("Failed to fetch admin stats", err);
+         }
+      };
+      fetchStats();
+
+      // Listen to published events for management
+      const q = query(collection(db, "published_events"), orderBy("timestamp", "desc"));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+          setEvents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+      return () => unsubscribe();
+    }
+  }, [isAdmin]);
+
+  const handleDeleteEvent = async (id: string) => {
+    if (confirm("Are you sure you want to completely delete this published event from the public site?")) {
+       await deleteDoc(doc(db, "published_events", id));
+       setStats(prev => ({ ...prev, projects: prev.projects - 1 }));
+    }
+  };
 
   if (loading) {
      return (
@@ -18,8 +59,6 @@ export default function ProfilePage() {
     auth.signOut();
     window.location.href = "/login";
   };
-
-  const isAdmin = profile?.role === "admin";
 
   return (
     <div className="pt-24 px-4 max-w-4xl mx-auto space-y-8 pb-32">
@@ -56,7 +95,7 @@ export default function ProfilePage() {
         <>
           <section className="space-y-6">
             <div className="flex items-center justify-between">
-              <h2 className="font-headline text-2xl font-bold text-on-surface tracking-tight">Admin Overview</h2>
+               <h2 className="font-headline text-2xl font-bold text-on-surface tracking-tight">Admin Overview</h2>
               <span className="bg-tertiary-container/20 text-tertiary px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider font-label">Real-time</span>
             </div>
             
@@ -68,11 +107,10 @@ export default function ProfilePage() {
                 </div>
                 <div className="flex justify-between items-start mb-4 relative z-10">
                   <span className="material-symbols-outlined text-primary text-2xl">public</span>
-                  <span className="text-xs font-bold text-tertiary flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">trending_up</span> +12%</span>
                 </div>
                 <div className="relative z-10">
-                  <p className="font-label text-sm text-on-surface-variant mb-1 font-medium">Active Projects</p>
-                  <h3 className="font-headline text-4xl font-extrabold text-on-surface tracking-tighter">47</h3>
+                  <p className="font-label text-sm text-on-surface-variant mb-1 font-medium">Published Events</p>
+                  <h3 className="font-headline text-4xl font-extrabold text-on-surface tracking-tighter">{stats.projects}</h3>
                 </div>
               </div>
 
@@ -83,79 +121,58 @@ export default function ProfilePage() {
                 </div>
                 <div className="flex justify-between items-start mb-4 relative z-10">
                   <span className="material-symbols-outlined text-on-primary text-2xl">groups</span>
-                  <span className="text-xs font-bold text-tertiary-fixed flex items-center gap-1"><span className="material-symbols-outlined text-[14px]">arrow_drop_up</span> +5 new</span>
                 </div>
                 <div className="relative z-10">
                   <p className="font-label text-sm text-primary-fixed-dim mb-1 font-medium">Field Personnel</p>
-                  <h3 className="font-headline text-4xl font-extrabold tracking-tighter">1,204</h3>
+                  <h3 className="font-headline text-4xl font-extrabold tracking-tighter">{stats.personnel}</h3>
                 </div>
               </div>
 
               <div className="bg-surface-container-low rounded-xl p-5 hover:bg-surface-container transition-colors duration-300 relative overflow-hidden">
                 <div className="absolute -right-4 -bottom-4 opacity-5 text-primary">
-                  <span className="material-symbols-outlined text-8xl" style={{ fontVariationSettings: "'FILL' 1" }}>description</span>
+                  <span className="material-symbols-outlined text-8xl" style={{ fontVariationSettings: "'FILL' 1" }}>cloud_upload</span>
                 </div>
                 <div className="flex justify-between items-start mb-4 relative z-10">
-                  <span className="material-symbols-outlined text-primary text-2xl">description</span>
-                  <span className="w-2 h-2 rounded-full bg-tertiary shadow-[0_0_8px_rgba(116,91,0,0.5)]"></span>
+                  <span className="material-symbols-outlined text-primary text-2xl">cloud_upload</span>
                 </div>
                 <div className="relative z-10">
-                  <p className="font-label text-sm text-on-surface-variant mb-1 font-medium">Pending Reports</p>
-                  <h3 className="font-headline text-4xl font-extrabold text-on-surface tracking-tighter">14</h3>
+                  <p className="font-label text-sm text-on-surface-variant mb-1 font-medium">Total Uploads</p>
+                  <h3 className="font-headline text-4xl font-extrabold text-on-surface tracking-tighter">{stats.uploads}</h3>
                 </div>
               </div>
             </div>
           </section>
 
-          {/* Quick Actions & Details */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <section className="bg-surface-container-lowest border border-outline-variant/15 rounded-xl p-6">
-              <h3 className="font-headline text-xl font-bold text-on-surface mb-6 tracking-tight">Administrative Actions</h3>
-              <div className="space-y-2">
-                <button className="w-full flex items-center justify-between p-4 bg-surface-container-low rounded-lg hover:bg-surface-container transition-colors active:scale-[0.98] duration-200">
-                  <div className="flex items-center gap-4">
-                    <div className="bg-primary-container/20 p-2 rounded-lg text-primary">
-                      <span className="material-symbols-outlined text-[20px]">person_add</span>
-                    </div>
-                    <span className="font-body font-semibold text-on-surface">Onboard New Personnel</span>
-                  </div>
-                  <span className="material-symbols-outlined text-on-surface-variant">chevron_right</span>
-                </button>
-                <button className="w-full flex items-center justify-between p-4 bg-tertiary-container/10 rounded-lg hover:bg-tertiary-container/20 transition-colors active:scale-[0.98] duration-200 border border-tertiary-container/30">
-                  <div className="flex items-center gap-4">
-                    <div className="bg-tertiary/20 p-2 rounded-lg text-tertiary">
-                      <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>approval</span>
-                    </div>
-                    <span className="font-body font-semibold text-tertiary">Review Field Reports</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-tertiary text-on-tertiary text-xs font-bold px-2 py-1 rounded-full">14 Pending</span>
-                    <span className="material-symbols-outlined text-tertiary">chevron_right</span>
-                  </div>
-                </button>
-                <button className="w-full flex items-center justify-between p-4 bg-surface-container-low rounded-lg hover:bg-surface-container transition-colors active:scale-[0.98] duration-200">
-                  <div className="flex items-center gap-4">
-                    <div className="bg-primary-container/20 p-2 rounded-lg text-primary">
-                      <span className="material-symbols-outlined text-[20px]">security</span>
-                    </div>
-                    <span className="font-body font-semibold text-on-surface">Security Protocols</span>
-                  </div>
-                  <span className="material-symbols-outlined text-on-surface-variant">chevron_right</span>
-                </button>
-              </div>
-            </section>
-            
-            <section className="bg-surface-container-low rounded-xl p-6">
-              <h3 className="font-headline text-xl font-bold text-on-surface mb-6 tracking-tight">Credentials & Specializations</h3>
-              <div className="flex flex-wrap gap-2">
-                <span className="bg-surface-container-lowest border border-outline-variant/15 px-4 py-2 rounded-full text-sm font-semibold text-on-surface shadow-sm">Crisis Management</span>
-                <span className="bg-surface-container-lowest border border-outline-variant/15 px-4 py-2 rounded-full text-sm font-semibold text-on-surface shadow-sm">Logistics</span>
-                <span className="bg-surface-container-lowest border border-outline-variant/15 px-4 py-2 rounded-full text-sm font-semibold text-on-surface shadow-sm">Negotiation</span>
-                <span className="bg-primary/10 text-primary px-4 py-2 rounded-full text-sm font-bold shadow-sm">Advanced First Aid</span>
-                <span className="bg-surface-container-lowest border border-outline-variant/15 px-4 py-2 rounded-full text-sm font-semibold text-on-surface shadow-sm">Bilingual (FR/EN)</span>
-              </div>
-            </section>
-          </div>
+          {/* Manage Published Events */}
+          <section className="bg-surface-container-lowest border border-outline-variant/15 rounded-xl p-6">
+             <h3 className="font-headline text-xl font-bold text-on-surface mb-6 tracking-tight">Manage Public Events</h3>
+             {events.length === 0 ? (
+                <p className="text-on-surface-variant font-medium text-sm">No events published yet.</p>
+             ) : (
+                <div className="space-y-3">
+                  {events.map((ev) => (
+                     <div key={ev.id} className="flex items-center justify-between p-4 bg-surface-container-low rounded-lg hover:bg-surface-container transition-colors border border-transparent hover:border-outline-variant/20">
+                        <div className="flex items-center gap-4">
+                           {ev.coverPhotoUrl ? (
+                              <img src={ev.coverPhotoUrl} alt="Cover" className="w-12 h-12 object-cover rounded-md bg-surface-container-highest" />
+                           ) : (
+                              <div className="w-12 h-12 rounded-md bg-surface-container-highest flex items-center justify-center text-on-surface-variant">
+                                 <span className="material-symbols-outlined">image</span>
+                              </div>
+                           )}
+                           <div className="flex flex-col">
+                              <span className="font-headline font-bold text-on-surface">{ev.title}</span>
+                              <span className="text-xs text-on-surface-variant font-medium text-ellipsis line-clamp-1 max-w-sm">{ev.description}</span>
+                           </div>
+                        </div>
+                        <button onClick={() => handleDeleteEvent(ev.id)} className="p-2 text-error hover:bg-error/10 hover:text-error rounded-full transition-colors flex items-center justify-center" title="Delete from Website">
+                           <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 0" }}>delete</span>
+                        </button>
+                     </div>
+                  ))}
+                </div>
+             )}
+          </section>
         </>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -204,4 +221,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-
